@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"pkg/storage"
-  "pkg/topology"
+	"pkg/topology"
 	"testing"
 	"time"
 )
@@ -80,7 +80,7 @@ func setup(topologyLayout string) *topology.Topology {
 	fmt.Println("data:", data)
 
 	//need to connect all nodes first before server adding volumes
-	topo := topology.NewTopology("mynetwork","/etc/weedfs/weedfs.conf","/tmp","testing",32*1024, 5)
+	topo := topology.NewTopology("mynetwork", "/etc/weedfs/weedfs.conf", "/tmp", "testing", 32*1024, 5)
 	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := topology.NewDataCenter(dcKey)
@@ -121,10 +121,9 @@ func TestRemoveDataCenter(t *testing.T) {
 
 func TestReserveOneVolume(t *testing.T) {
 	topo := setup(topologyLayout)
-  rand.Seed(time.Now().UnixNano())
-  vg:=&VolumeGrowth{copy1factor:3,copy2factor:2,copy3factor:1,copyAll:4}
-  if c, e := vg.GrowByCountAndType(1,storage.Copy000,topo);e==nil{
-    t.Log("reserved", c)
-  }
+	rand.Seed(time.Now().UnixNano())
+	vg := &VolumeGrowth{copy1factor: 3, copy2factor: 2, copy3factor: 1, copyAll: 4}
+	if c, e := vg.GrowByCountAndType(1, storage.Copy000, topo); e == nil {
+		t.Log("reserved", c)
+	}
 }
-

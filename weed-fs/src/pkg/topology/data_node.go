@@ -13,7 +13,7 @@ type DataNode struct {
 	Port      int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
-	Dead    bool
+	Dead      bool
 }
 
 func NewDataNode(id string) *DataNode {
@@ -21,7 +21,7 @@ func NewDataNode(id string) *DataNode {
 	s.id = NodeId(id)
 	s.nodeType = "DataNode"
 	s.volumes = make(map[storage.VolumeId]storage.VolumeInfo)
-  s.NodeImpl.value = s
+	s.NodeImpl.value = s
 	return s
 }
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) {
@@ -45,7 +45,7 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 	return dn.Ip == ip && dn.Port == port
 }
 func (dn *DataNode) Url() string {
-  return dn.Ip + ":" + strconv.Itoa(dn.Port)
+	return dn.Ip + ":" + strconv.Itoa(dn.Port)
 }
 
 func (dn *DataNode) ToMap() interface{} {

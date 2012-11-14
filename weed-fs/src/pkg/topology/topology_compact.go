@@ -3,7 +3,7 @@ package topology
 import (
 	"encoding/json"
 	"errors"
-  "fmt"
+	"fmt"
 	"net/url"
 	"pkg/storage"
 	"pkg/util"

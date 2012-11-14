@@ -38,8 +38,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	}
 }
 
-func (vl *VolumeLayout) Lookup(vid storage.VolumeId) (*[]*DataNode) {
-  return &vl.vid2location[vid].list
+func (vl *VolumeLayout) Lookup(vid storage.VolumeId) *[]*DataNode {
+	return &vl.vid2location[vid].list
 }
 
 func (vl *VolumeLayout) PickForWrite(count int) (*storage.VolumeId, int, *VolumeLocationList, error) {

@@ -142,4 +142,3 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	t.LinkChildNode(dc)
 	return dc
 }
-

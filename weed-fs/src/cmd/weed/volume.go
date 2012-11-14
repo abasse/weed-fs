@@ -95,14 +95,32 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	n.ParsePath(fid)
 
-	debug("volume", volumeId, "reading", n)
+	debug("volume", volumeId, "reading", n.Id)
 	if !store.HasVolume(volumeId) {
 		lookupResult, err := operation.Lookup(*masterNode, volumeId)
 		debug("volume", volumeId, "found on", lookupResult, "error", err)
+		ok := false
 		if err == nil {
-			http.Redirect(w, r, "http://"+lookupResult.Locations[0].PublicUrl+r.URL.Path, http.StatusMovedPermanently)
+			baseurl := *publicUrl
+			if baseurl == "" {
+				baseurl = *ip + ":" + strconv.Itoa(*vport)
+			}
+			for _, loc := range lookupResult.Locations {
+				debug("urlbase=", baseurl, " loc=", loc.PublicUrl)
+				if loc.PublicUrl != baseurl {
+					debug(r.URL.String()+" redirecting to ", loc.PublicUrl)
+					http.Redirect(w, r, "http://"+loc.PublicUrl+r.URL.Path, http.StatusMovedPermanently)
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				debug("couldn't find different location!")
+			}
 		} else {
 			debug("lookup error:", err, r.URL.Path)
+		}
+		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 		}
 		return
@@ -144,24 +162,29 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ne != nil {
 			writeJson(w, r, ne)
 		} else {
-			ret := store.Write(volumeId, needle)
 			errorStatus := ""
-			needToReplicate := !store.HasVolume(volumeId)
-			if !needToReplicate && ret > 0 {
-				needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
-			}
-			if needToReplicate { //send to other replica locations
-				if r.FormValue("type") != "standard" {
-					if !distributedOperation(volumeId, func(location operation.Location) bool {
-						_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
-						return err == nil
-					}) {
-						ret = 0
-						errorStatus = "Failed to write to replicas for volume " + volumeId.String()
-					}
-				}
+			ret, err := store.Write(volumeId, needle)
+			if err != nil {
+				log.Println("error writing %s to %s: %s", needle, volumeId, err)
+				errorStatus = err.Error()
 			} else {
-				errorStatus = "Failed to write to local disk"
+				needToReplicate := !store.HasVolume(volumeId)
+				if !needToReplicate && ret > 0 {
+					needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
+				}
+				if needToReplicate { //send to other replica locations
+					if r.FormValue("type") != "standard" {
+						if !distributedOperation(volumeId, func(location operation.Location) bool {
+							_, err := operation.Upload("http://"+location.Url+r.URL.Path+"?type=standard", filename, bytes.NewReader(needle.Data))
+							return err == nil
+						}) {
+							ret = 0
+							errorStatus = "Failed to write to replicas for volume " + volumeId.String()
+						}
+					}
+				} else {
+					errorStatus = "Failed to write to local disk (no need to replicate)"
+				}
 			}
 			m := make(map[string]interface{})
 			if errorStatus == "" {
@@ -235,8 +258,8 @@ func parseURLPath(path string) (vid, fid, ext string) {
 	sepIndex := strings.LastIndex(path, "/")
 	commaIndex := strings.LastIndex(path[sepIndex:], ",")
 	if commaIndex <= 0 {
-		if "favicon.ico" != path[sepIndex+1:] {
-			log.Println("unknown file id", path[sepIndex+1:])
+		if len(path) > sepIndex+1 && "favicon.ico" != path[sepIndex+1:] {
+			log.Println("unknown file id:", path[sepIndex+1:], ".")
 		}
 		return
 	}

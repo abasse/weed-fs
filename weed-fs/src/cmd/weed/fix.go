@@ -1,65 +1,70 @@
 package main
 
 import (
-  "pkg/storage"
-  "log"
-  "os"
-  "path"
-  "strconv"
+	"log"
+	"os"
+	"path"
+	"pkg/storage"
+	"strconv"
 )
 
 func init() {
-  cmdFix.Run = runFix // break init cycle
-  IsDebug  = cmdFix.Flag.Bool("debug", false, "enable debug mode")
+	cmdFix.Run = runFix // break init cycle
+	IsDebug = cmdFix.Flag.Bool("debug", false, "enable debug mode")
 }
 
 var cmdFix = &Command{
-  UsageLine: "fix -dir=/tmp -volumeId=234 -debug=1",
-  Short:     "run weed tool fix on data file if corrupted",
-  Long: `Fix runs the WeedFS fix command on the .dat volume file.
+	UsageLine: "fix -dir=/tmp -volumeId=234 -debug=1",
+	Short:     "run weed tool fix on data file if corrupted",
+	Long: `Fix runs the WeedFS fix command on the .dat volume file.
 
   `,
 }
 
 var (
-  dir      = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
-  volumeId = cmdFix.Flag.Int("volumeId", -1, "a non-negative volume id. The volume should already exist in the dir. The volume index file should not exist.")
+	dir      = cmdFix.Flag.String("dir", "/tmp", "data directory to store files")
+	volumeId = cmdFix.Flag.Int("volumeId", -1, "a non-negative volume id. The volume should already exist in the dir. The volume index file should not exist.")
 )
 
 func runFix(cmd *Command, args []string) bool {
 
-  if *volumeId == -1 {
-    return false
-  }
+	if *volumeId == -1 {
+		return false
+	}
 
-  fileName := strconv.Itoa(*volumeId)
-  dataFile, e := os.OpenFile(path.Join(*dir, fileName+".dat"), os.O_RDONLY, 0644)
-  if e != nil {
-    log.Fatalf("Read Volume [ERROR] %s\n", e)
-  }
-  defer dataFile.Close()
-  indexFile, ie := os.OpenFile(path.Join(*dir, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
-  if ie != nil {
-    log.Fatalf("Create Volume Index [ERROR] %s\n", ie)
-  }
-  defer indexFile.Close()
+	fileName := strconv.Itoa(*volumeId)
+	dataFile, e := os.OpenFile(path.Join(*dir, fileName+".dat"), os.O_RDONLY, 0644)
+	if e != nil {
+		log.Fatalf("Read Volume [ERROR] %s\n", e)
+	}
+	defer dataFile.Close()
+	indexFile, ie := os.OpenFile(path.Join(*dir, fileName+".idx"), os.O_WRONLY|os.O_CREATE, 0644)
+	if ie != nil {
+		log.Fatalf("Create Volume Index [ERROR] %s\n", ie)
+	}
+	defer indexFile.Close()
 
-  //skip the volume super block
-  dataFile.Seek(storage.SuperBlockSize, 0)
+	//skip the volume super block
+	dataFile.Seek(storage.SuperBlockSize, 0)
 
-  n, rest := storage.ReadNeedle(dataFile)
-  dataFile.Seek(int64(rest), 1)
-  nm := storage.NewNeedleMap(indexFile)
-  offset := uint32(storage.SuperBlockSize)
-  for n != nil {
-    debug("key", n.Id, "volume offset", offset, "data_size", n.Size, "rest", rest)
-    if n.Size > 0 {
-      count, pe := nm.Put(n.Id, offset/8, n.Size)
-      debug("saved", count, "with error", pe)
-    }
-    offset += rest+16
-    n, rest = storage.ReadNeedle(dataFile)
-    dataFile.Seek(int64(rest), 1)
-  }
-  return true
+	n, rest, err := storage.ReadNeedle(dataFile)
+	if err != nil {
+		log.Fatalf("error reading needle: %s", err)
+	}
+	dataFile.Seek(int64(rest), 1)
+	nm := storage.NewNeedleMap(indexFile)
+	offset := uint32(storage.SuperBlockSize)
+	for n != nil {
+		debug("key", n.Id, "volume offset", offset, "data_size", n.Size, "rest", rest)
+		if n.Size > 0 {
+			count, pe := nm.Put(n.Id, offset/8, n.Size)
+			debug("saved", count, "with error", pe)
+		}
+		offset += rest + 16
+		if n, rest, err = storage.ReadNeedle(dataFile); err != nil {
+			log.Fatalf("error reading needle: %s", err)
+		}
+		dataFile.Seek(int64(rest), 1)
+	}
+	return true
 }

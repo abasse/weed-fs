@@ -76,12 +76,12 @@ func (s *Store) CompactVolume(volumeIdString string) error {
 	}
 	return s.volumes[vid].compact()
 }
-func (s *Store) CommitCompactVolume(volumeIdString string) (int,error) {
-  vid, err := NewVolumeId(volumeIdString)
-  if err != nil {
-    return 0, errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
-  }
-  return s.volumes[vid].commitCompact()
+func (s *Store) CommitCompactVolume(volumeIdString string) (int, error) {
+	vid, err := NewVolumeId(volumeIdString)
+	if err != nil {
+		return 0, errors.New("Volume Id " + volumeIdString + " is not a valid unsigned integer!")
+	}
+	return s.volumes[vid].commitCompact()
 }
 func (s *Store) loadExistingVolumes() {
 	if dirs, err := ioutil.ReadDir(s.dir); err == nil {
@@ -131,11 +131,11 @@ func (s *Store) Close() {
 		v.Close()
 	}
 }
-func (s *Store) Write(i VolumeId, n *Needle) uint32 {
+func (s *Store) Write(i VolumeId, n *Needle) (uint32, error) {
 	if v := s.volumes[i]; v != nil {
 		return v.write(n)
 	}
-	return 0
+	return 0, nil
 }
 func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
 	if v := s.volumes[i]; v != nil {
@@ -155,5 +155,6 @@ func (s *Store) GetVolume(i VolumeId) *Volume {
 
 func (s *Store) HasVolume(i VolumeId) bool {
 	_, ok := s.volumes[i]
+	log.Printf("volume %s in volumes (%s)? %s", i, s.volumes, ok)
 	return ok
 }
