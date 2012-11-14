@@ -138,8 +138,13 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	var mtype string
 	if ext != "" {
-		mtype := mime.TypeByExtension(ext)
+		mtype = mime.TypeByExtension(ext)
+	} else if n.ContentType != nil {
+		mtype = string(n.ContentType)
+	}
+	if mtype != "" {
 		w.Header().Set("Content-Type", mtype)
 		if storage.IsGzippable(ext, mtype) {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -149,6 +154,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 	w.Write(n.Data)
 }
 func PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +174,10 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 				log.Println("error writing %s to %s: %s", needle, volumeId, err)
 				errorStatus = err.Error()
 			} else {
+				// log.Printf("written to %s", volumeId)
 				needToReplicate := !store.HasVolume(volumeId)
+				// log.Printf("needToReplicate=%s ret=%d", needToReplicate, ret)
+				// debug("needToReplicate?", needToReplicate, "ret:", ret)
 				if !needToReplicate && ret > 0 {
 					needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
 				}
@@ -182,8 +191,8 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 							errorStatus = "Failed to write to replicas for volume " + volumeId.String()
 						}
 					}
-				} else {
-					errorStatus = "Failed to write to local disk (no need to replicate)"
+					// } else {
+					// 	errorStatus = "Failed to write to local disk (no need to replicate)"
 				}
 			}
 			m := make(map[string]interface{})

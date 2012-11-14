@@ -77,6 +77,7 @@ func (v *Volume) NeedToReplicate() bool {
 	return v.replicaType.GetCopyCount() > 1
 }
 
+// writes needle to volumen's datafile, returns written data length
 func (v *Volume) write(n *Needle) (uint32, error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
@@ -86,8 +87,8 @@ func (v *Volume) write(n *Needle) (uint32, error) {
 		return 0, err
 	}
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || int64(nv.Offset)*8 < offset {
-		v.nm.Put(n.Id, uint32(offset/8), n.Size)
+	if !ok || int64(nv.Offset)*PadLen < offset {
+		v.nm.Put(n.Id, uint32(offset/PadLen), n.Size)
 	}
 	return ret, nil
 }
@@ -98,7 +99,7 @@ func (v *Volume) delete(n *Needle) uint32 {
 	//log.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok {
 		v.nm.Delete(n.Id)
-		v.dataFile.Seek(int64(nv.Offset*8), 0)
+		v.dataFile.Seek(int64(nv.Offset*PadLen), 0)
 		n.Append(v.dataFile)
 		return nv.Size
 	}
@@ -109,7 +110,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 	defer v.accessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
-		v.dataFile.Seek(int64(nv.Offset)*8, 0)
+		v.dataFile.Seek(int64(nv.Offset)*PadLen, 0)
 		return n.Read(v.dataFile, nv.Size)
 	}
 	return -1, errors.New("Not Found")
@@ -167,12 +168,12 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 	for n != nil {
 		nv, ok := v.nm.Get(n.Id)
 		//log.Println("file size is", n.Size, "rest", rest)
-		if !ok || nv.Offset*8 != old_offset {
-			log.Println("expected offset should be", nv.Offset*8, "skipping", (rest - 16), "key", n.Id, "volume offset", old_offset, "data_size", n.Size, "rest", rest)
+		if !ok || nv.Offset*PadLen != old_offset {
+			log.Println("expected offset should be", nv.Offset*PadLen, "skipping", (rest - 16), "key", n.Id, "volume offset", old_offset, "data_size", n.Size, "rest", rest)
 			src.Seek(int64(rest), 1)
 		} else {
 			if nv.Size > 0 {
-				nm.Put(n.Id, new_offset/8, n.Size)
+				nm.Put(n.Id, new_offset/PadLen, n.Size)
 				bytes := make([]byte, n.Size+4)
 				src.Read(bytes)
 				n.Data = bytes[:n.Size]

@@ -155,6 +155,6 @@ func (s *Store) GetVolume(i VolumeId) *Volume {
 
 func (s *Store) HasVolume(i VolumeId) bool {
 	_, ok := s.volumes[i]
-	log.Printf("volume %s in volumes (%s)? %s", i, s.volumes, ok)
+	// log.Printf("volume %s in volumes (%s)? %s", i, s.volumes, ok)
 	return ok
 }

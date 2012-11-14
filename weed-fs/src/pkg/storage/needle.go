@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	PaddingSize = 8
-	HeaderSize  = 17
+	PadLen     = 8
+	HeaderSize = 17
+	CksumLen   = 4
 )
 
 type Needle struct {
@@ -101,9 +102,12 @@ func (n *Needle) ParsePath(fid string) error {
 	}
 	return nil
 }
+
+// appends needle to the writer, returns written data bytes and error
+// The written data is header, data, checksum, content-type, and padding
 func (n *Needle) Append(w io.Writer) (uint32, error) {
 	var err error
-	header := make([]byte, 17)
+	header := make([]byte, HeaderSize)
 	util.Uint32toBytes(header[0:4], n.Cookie)
 	util.Uint64toBytes(header[4:12], n.Id)
 	n.Size = uint32(len(n.Data))
@@ -125,7 +129,7 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 			return 0, err
 		}
 	}
-	rest := PaddingSize - ((n.Size + HeaderSize + uint32(n.ctsize) + 4) % PaddingSize)
+	rest := PadLen - ((n.Size + HeaderSize + uint32(n.ctsize) + 4) % PadLen)
 	if rest > 0 {
 		for i := uint32(0); i < rest; i++ {
 			header[i] = 0
@@ -136,9 +140,11 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 	}
 	return n.Size, nil
 }
+
+// reads needle with data, returns read data length and error
 func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
-	bytes := make([]byte, size+HeaderSize+4)
-	ret, e := r.Read(bytes)
+	bytes := make([]byte, HeaderSize+size+CksumLen)
+	ret, e := io.ReadFull(r, bytes)
 	if e != nil {
 		return 0, e
 	}
@@ -147,13 +153,23 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.ctsize = bytes[16]
 	n.Data = bytes[HeaderSize : HeaderSize+size]
-	checksum := util.BytesToUint32(bytes[HeaderSize+size : HeaderSize+size+4])
+	checksum := util.BytesToUint32(bytes[HeaderSize+size : HeaderSize+size+CksumLen])
 	if checksum != NewCRC(n.Data).Value() {
 		return 0, errors.New("CRC error! Data On Disk Corrupted!")
 	}
-	n.ContentType = bytes[HeaderSize+size+4 : HeaderSize+size+4+uint32(n.ctsize)]
+	if n.ctsize > 0 {
+		ctype := make([]byte, n.ctsize)
+		s, e := io.ReadFull(r, ctype)
+		if e != nil {
+			return ret, fmt.Errorf("cannot read content-type: %s", e)
+		}
+		n.ContentType = ctype[:s]
+		// ret += s
+	}
 	return ret, e
 }
+
+// returns filled Needle, rest (jump) size and error
 func ReadNeedle(r *os.File) (*Needle, uint32, error) {
 	n := new(Needle)
 	bytes := make([]byte, HeaderSize)
@@ -165,9 +181,11 @@ func ReadNeedle(r *os.File) (*Needle, uint32, error) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.ctsize = bytes[16]
-	rest := PaddingSize - ((n.Size + HeaderSize + uint32(n.ctsize) + 4) % PaddingSize)
-	return n, n.Size + 4 + uint32(n.ctsize) + rest, nil
+	rest := PadLen - ((n.Size + HeaderSize + uint32(n.ctsize) + CksumLen) % PadLen)
+	return n, n.Size + CksumLen + uint32(n.ctsize) + rest, nil
 }
+
+// parses key and hash
 func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
 	key_hash_bytes, khe := hex.DecodeString(key_hash_string)
 	key_hash_len := len(key_hash_bytes)
