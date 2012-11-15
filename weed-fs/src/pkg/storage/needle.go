@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"io/ioutil"
 	"mime"
 	"net/http"
+	"net/textproto"
 	"os"
 	"pkg/util"
 	"strconv"
@@ -25,16 +28,16 @@ const (
 )
 
 type Needle struct {
-	Cookie      uint32  "random number to mitigate brute force lookups"
-	Id          uint64  "needle id"
-	Size        uint32  "Data size"
-	Data        []byte  "The actual file data"
-	Checksum    CRC     "CRC32 to check integrity"
-	ctsize      uint8   "content-type size"
-	Flags       uint8   "flags (gzipped?)"
-	reserved    [6]byte "reserved for future"
-	ContentType []byte  "file content-type"
-	Padding     []byte  "Aligned to 8 bytes"
+	Cookie   uint32               "random number to mitigate brute force lookups"
+	Id       uint64               "needle id"
+	Size     uint32               "Data size"
+	Data     []byte               "The actual file data"
+	Checksum CRC                  "CRC32 to check integrity"
+	infosize uint16               "size of headers"
+	Flags    uint8                "flags (gzipped?)"
+	reserved [5]byte              "reserved for future"
+	Info     textproto.MIMEHeader "headers (HTTP, like Content-Type, X-Filename, Content-Disposition)"
+	Padding  []byte               "Aligned to 8 bytes"
 }
 
 // returns a new needle read from the HTTP request
@@ -52,21 +55,18 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		return
 	}
 	fname = part.FileName()
+	if p := strings.LastIndexAny(fname, `/\`); p > -1 {
+		fname = fname[p+1:]
+	}
+	part.Header.Add("X-Filename", fname)
 	ext := ""
 	ctype := part.Header.Get("Content-Type")
-	if len(n.ContentType) == 0 {
+	if ctype == "" {
 		dotIndex := strings.LastIndex(fname, ".")
 		if dotIndex > 0 {
 			ext = fname[dotIndex:]
 			ctype = mime.TypeByExtension(ext)
 		}
-	}
-	if len(ctype) > 255 {
-		n.ContentType = []byte(ctype[:255])
-		n.ctsize = 255
-	} else {
-		n.ContentType = []byte(ctype)
-		n.ctsize = uint8(len(n.ContentType))
 	}
 	data, fe := ioutil.ReadAll(part)
 	if fe != nil {
@@ -83,6 +83,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 	}
 	n.Data = data
 	n.Checksum = NewCRC(data)
+	n.Info = part.Header
 
 	commaSep := strings.LastIndex(r.URL.Path, ",")
 	dotSep := strings.LastIndex(r.URL.Path, ".")
@@ -133,8 +134,12 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 	n.Size = uint32(len(n.Data))
 	util.Uint32toBytes(header[12:16], n.Size)
 	header[16] = n.Flags
-	n.ctsize = uint8(len(n.ContentType))
-	header[17] = n.ctsize
+	info, err := HeaderToBytes(n.Info)
+	if err != nil {
+		return 0, err
+	}
+	n.infosize = uint16(len(info))
+	util.Uint16toBytes(header[17:19], n.infosize)
 	if _, err = w.Write(header); err != nil {
 		return 0, err
 	}
@@ -145,12 +150,12 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 	if _, err = w.Write(header[0:4]); err != nil {
 		return 0, err
 	}
-	if n.ctsize > 0 {
-		if _, err = w.Write(n.ContentType); err != nil {
+	if n.infosize > 0 {
+		if _, err = w.Write(info); err != nil {
 			return 0, err
 		}
 	}
-	rest := PadLen - ((n.Size + HeaderSize + uint32(n.ctsize) + 4) % PadLen)
+	rest := PadLen - ((n.Size + HeaderSize + uint32(n.infosize) + 4) % PadLen)
 	if rest > 0 {
 		for i := uint32(0); i < rest; i++ {
 			header[i] = 0
@@ -173,20 +178,19 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.Flags = bytes[16]
-	n.ctsize = bytes[17]
+	n.infosize = util.BytesToUint16(bytes[17:19])
 	n.Data = bytes[HeaderSize : HeaderSize+size]
 	checksum := util.BytesToUint32(bytes[HeaderSize+size : HeaderSize+size+CksumLen])
 	if checksum != NewCRC(n.Data).Value() {
 		return 0, errors.New("CRC error! Data On Disk Corrupted!")
 	}
-	if n.ctsize > 0 {
-		ctype := make([]byte, n.ctsize)
-		s, e := io.ReadFull(r, ctype)
+	if n.infosize > 0 {
+		mr := textproto.NewReader(bufio.NewReader(
+			io.LimitReader(r, int64(n.infosize))))
+		n.Info, e = mr.ReadMIMEHeader()
 		if e != nil {
-			return ret, fmt.Errorf("cannot read content-type: %s", e)
+			return ret, fmt.Errorf("cannot read info: %s", e)
 		}
-		n.ContentType = ctype[:s]
-		// ret += s
 	}
 	return ret, e
 }
@@ -203,9 +207,9 @@ func ReadNeedle(r *os.File) (*Needle, uint32, error) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	n.Flags = bytes[16]
-	n.ctsize = bytes[17]
-	rest := PadLen - ((n.Size + HeaderSize + uint32(n.ctsize) + CksumLen) % PadLen)
-	return n, n.Size + CksumLen + uint32(n.ctsize) + rest, nil
+	n.infosize = util.BytesToUint16(bytes[17:19])
+	rest := PadLen - ((n.Size + HeaderSize + uint32(n.infosize) + CksumLen) % PadLen)
+	return n, n.Size + CksumLen + uint32(n.infosize) + rest, nil
 }
 
 // parses key and hash
@@ -224,4 +228,29 @@ func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
 // is the Data gzipped?
 func (n Needle) IsGzipped() bool {
 	return n.Flags&FlagGzipped > 0
+}
+
+// Allowed headers
+var AllowedHeaders = map[string]bool{"Content-Type": true, "X-Filename": true}
+
+func HeaderToBytes(header textproto.MIMEHeader) ([]byte, error) {
+	hdrs := make(http.Header, len(AllowedHeaders))
+	for k, v := range header {
+		k = http.CanonicalHeaderKey(k)
+		if _, ok := AllowedHeaders[k]; ok {
+			hdrs[k] = v
+		}
+	}
+	// FIXME: Content-Disposition
+	hbuf := bytes.NewBuffer(nil)
+	if err := hdrs.Write(hbuf); err != nil {
+		return nil, err
+	} else {
+		if len(hbuf.Bytes()) >= 1<<16-1 {
+			return hbuf.Bytes()[:1<<16-1], nil
+		} else {
+			return hbuf.Bytes(), nil
+		}
+	}
+	return nil, errors.New("unreachable")
 }

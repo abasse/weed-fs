@@ -141,11 +141,16 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	var mtype string
 	if ext != "" {
 		mtype = mime.TypeByExtension(ext)
-	} else if n.ContentType != nil {
-		mtype = string(n.ContentType)
+	} else if v, ok := n.Info["Content-Type"]; ok {
+		mtype = v[0]
+	}
+	for k, v := range n.Info {
+		for _, x := range v {
+			w.Header().Add(k, x)
+		}
 	}
 	if mtype != "" {
-		w.Header().Set("Content-Type", mtype)
+		// w.Header().Set("Content-Type", mtype)
 		if n.IsGzipped() {
 			// if storage.IsGzippable(ext, mtype) {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
