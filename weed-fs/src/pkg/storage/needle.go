@@ -169,27 +169,33 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 
 // reads needle with data, returns read data length and error
 func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
-	bytes := make([]byte, HeaderSize+size+CksumLen)
-	ret, e := io.ReadFull(r, bytes)
+	header := make([]byte, HeaderSize+size+CksumLen)
+	ret, e := io.ReadFull(r, header)
 	if e != nil {
 		return 0, e
 	}
-	n.Cookie = util.BytesToUint32(bytes[0:4])
-	n.Id = util.BytesToUint64(bytes[4:12])
-	n.Size = util.BytesToUint32(bytes[12:16])
-	n.Flags = bytes[16]
-	n.infosize = util.BytesToUint16(bytes[17:19])
-	n.Data = bytes[HeaderSize : HeaderSize+size]
-	checksum := util.BytesToUint32(bytes[HeaderSize+size : HeaderSize+size+CksumLen])
+	n.Cookie = util.BytesToUint32(header[0:4])
+	n.Id = util.BytesToUint64(header[4:12])
+	n.Size = util.BytesToUint32(header[12:16])
+	n.Flags = header[16]
+	n.infosize = util.BytesToUint16(header[17:19])
+	n.Data = header[HeaderSize : HeaderSize+size]
+	checksum := util.BytesToUint32(header[HeaderSize+size : HeaderSize+size+CksumLen])
 	if checksum != NewCRC(n.Data).Value() {
 		return 0, errors.New("CRC error! Data On Disk Corrupted!")
 	}
 	if n.infosize > 0 {
+		info := make([]byte, n.infosize, n.infosize+2)
+		if _, e = io.ReadFull(r, info); e != nil {
+			return ret, fmt.Errorf("error reading %d bytes as info: %s", n.infosize, e)
+		}
+		info = info[:cap(info)]
+		info[n.infosize], info[n.infosize+1] = '\r', '\n'
 		mr := textproto.NewReader(bufio.NewReader(
-			io.LimitReader(r, int64(n.infosize))))
+			bytes.NewReader(info)))
 		n.Info, e = mr.ReadMIMEHeader()
 		if e != nil {
-			return ret, fmt.Errorf("cannot read info: %s", e)
+			return ret, fmt.Errorf("cannot read info (%s): %s", info, e)
 		}
 	}
 	return ret, e
