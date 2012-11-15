@@ -15,24 +15,30 @@ import (
 )
 
 const (
-	PadLen     = 8
-	HeaderSize = 17
-	CksumLen   = 4
+	PadLen     = 8  // padding length (volume phisical size is 2^32 * PadLen)
+	HeaderSize = 24 // header size
+	CksumLen   = 4  // checksum (CRC32) length
+)
+
+const (
+	FlagGzipped = 1 << iota
 )
 
 type Needle struct {
-	Cookie      uint32 "random number to mitigate brute force lookups"
-	Id          uint64 "needle id"
-	Size        uint32 "Data size"
-	Data        []byte "The actual file data"
-	Checksum    CRC    "CRC32 to check integrity"
-	ctsize      uint8  "content-type size"
-	ContentType []byte "file content-type"
-	Padding     []byte "Aligned to 8 bytes"
+	Cookie      uint32  "random number to mitigate brute force lookups"
+	Id          uint64  "needle id"
+	Size        uint32  "Data size"
+	Data        []byte  "The actual file data"
+	Checksum    CRC     "CRC32 to check integrity"
+	ctsize      uint8   "content-type size"
+	Flags       uint8   "flags (gzipped?)"
+	reserved    [6]byte "reserved for future"
+	ContentType []byte  "file content-type"
+	Padding     []byte  "Aligned to 8 bytes"
 }
 
+// returns a new needle read from the HTTP request
 func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
-
 	n = new(Needle)
 	form, fe := r.MultipartReader()
 	if fe != nil {
@@ -40,7 +46,11 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		e = fe
 		return
 	}
-	part, _ := form.NextPart()
+	part, fe := form.NextPart()
+	if fe != nil {
+		e = fe
+		return
+	}
 	fname = part.FileName()
 	ext := ""
 	ctype := part.Header.Get("Content-Type")
@@ -58,10 +68,18 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 		n.ContentType = []byte(ctype)
 		n.ctsize = uint8(len(n.ContentType))
 	}
-	data, _ := ioutil.ReadAll(part)
+	data, fe := ioutil.ReadAll(part)
+	if fe != nil {
+		e = fe
+		return
+	}
 	//log.Println("uploading file " + part.FileName())
 	if IsGzippable(ext, ctype) {
-		data = GzipData(data)
+		n.Flags |= FlagGzipped
+		if data, e = GzipData(data); e != nil {
+			return
+		}
+
 	}
 	n.Data = data
 	n.Checksum = NewCRC(data)
@@ -76,6 +94,8 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 	e = n.ParsePath(fid)
 	return
 }
+
+// parses volumeid,fileid+key
 func (n *Needle) ParsePath(fid string) error {
 	length := len(fid)
 	if length <= 8 {
@@ -112,8 +132,9 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 	util.Uint64toBytes(header[4:12], n.Id)
 	n.Size = uint32(len(n.Data))
 	util.Uint32toBytes(header[12:16], n.Size)
+	header[16] = n.Flags
 	n.ctsize = uint8(len(n.ContentType))
-	header[16] = n.ctsize
+	header[17] = n.ctsize
 	if _, err = w.Write(header); err != nil {
 		return 0, err
 	}
@@ -151,7 +172,8 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Cookie = util.BytesToUint32(bytes[0:4])
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
-	n.ctsize = bytes[16]
+	n.Flags = bytes[16]
+	n.ctsize = bytes[17]
 	n.Data = bytes[HeaderSize : HeaderSize+size]
 	checksum := util.BytesToUint32(bytes[HeaderSize+size : HeaderSize+size+CksumLen])
 	if checksum != NewCRC(n.Data).Value() {
@@ -180,7 +202,8 @@ func ReadNeedle(r *os.File) (*Needle, uint32, error) {
 	n.Cookie = util.BytesToUint32(bytes[0:4])
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
-	n.ctsize = bytes[16]
+	n.Flags = bytes[16]
+	n.ctsize = bytes[17]
 	rest := PadLen - ((n.Size + HeaderSize + uint32(n.ctsize) + CksumLen) % PadLen)
 	return n, n.Size + CksumLen + uint32(n.ctsize) + rest, nil
 }
@@ -196,4 +219,9 @@ func ParseKeyHash(key_hash_string string) (uint64, uint32, error) {
 	key := util.BytesToUint64(key_hash_bytes[0 : key_hash_len-4])
 	hash := util.BytesToUint32(key_hash_bytes[key_hash_len-4 : key_hash_len])
 	return key, hash, nil
+}
+
+// is the Data gzipped?
+func (n Needle) IsGzipped() bool {
+	return n.Flags&FlagGzipped > 0
 }

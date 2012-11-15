@@ -8,39 +8,49 @@ import (
 	"strings"
 )
 
+// is the extension or the mime-type compressable?
 func IsGzippable(ext, mtype string) bool {
-	if ext == ".zip" {
+	switch ext {
+	case ".zip", ".rar", ".jpg", ".jpeg", ".png", ".bz2", ".xz":
 		return false
 	}
-	if ext == ".rar" {
-		return false
-	}
-	if strings.Index(mtype, "text/") == 0 {
-		return true
-	}
-	if strings.Index(mtype, "application/") == 0 {
+	if strings.HasPrefix(mtype, "text/") || strings.HasPrefix(mtype, "application/") {
 		return true
 	}
 	return false
 }
-func GzipData(input []byte) []byte {
+
+// gzips bytes
+func GzipData(input []byte) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	w, _ := gzip.NewWriterLevel(buf, flate.BestCompression)
-	if _, err := w.Write(input); err != nil {
+	w, err := gzip.NewWriterLevel(buf, flate.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = w.Write(input); err != nil {
 		println("error compressing data:", err)
+		w.Close()
+		return nil, err
 	}
-	if err := w.Close(); err != nil {
+	if err = w.Close(); err != nil {
 		println("error closing compressed data:", err)
+		return nil, err
 	}
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
-func UnGzipData(input []byte) []byte {
+
+// ungzips bytes
+func UnGzipData(input []byte) ([]byte, error) {
 	buf := bytes.NewBuffer(input)
-	r, _ := gzip.NewReader(buf)
+	r, err := gzip.NewReader(buf)
+	if err != nil {
+		return nil, err
+	}
 	defer r.Close()
 	output, err := ioutil.ReadAll(r)
 	if err != nil {
 		println("error uncompressing data:", err)
+		return nil, err
 	}
-	return output
+	return output, nil
 }

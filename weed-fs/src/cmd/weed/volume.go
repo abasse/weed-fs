@@ -146,17 +146,22 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if mtype != "" {
 		w.Header().Set("Content-Type", mtype)
-		if storage.IsGzippable(ext, mtype) {
+		if n.IsGzipped() {
+			// if storage.IsGzippable(ext, mtype) {
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
 			} else {
-				n.Data = storage.UnGzipData(n.Data)
+				if n.Data, e = storage.UnGzipData(n.Data); e != nil {
+					log.Println("cannot ungzip data: %s", e)
+				}
 			}
 		}
 	}
+	// send length - no chunked encoding (faster)
 	w.Header().Set("Content-Length", strconv.Itoa(len(n.Data)))
 	w.Write(n.Data)
 }
+
 func PostHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	vid, _, _ := parseURLPath(r.URL.Path)
