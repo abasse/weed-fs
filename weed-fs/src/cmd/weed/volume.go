@@ -145,9 +145,10 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 		mtype = v[0]
 	}
 	for k, v := range n.Info {
-		for _, x := range v {
-			w.Header().Add(k, x)
-		}
+		w.Header()[k] = v
+		// for _, x := range v {
+		// 	w.Header().Add(k, x)
+		// }
 	}
 	if mtype != "" {
 		// w.Header().Set("Content-Type", mtype)

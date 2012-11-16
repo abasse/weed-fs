@@ -47,7 +47,7 @@ func runFix(cmd *Command, args []string) bool {
 	//skip the volume super block
 	dataFile.Seek(storage.SuperBlockSize, 0)
 
-	n, rest, err := storage.ReadNeedle(dataFile)
+	n, rest, err := storage.ReadNeedle(dataFile, storage.Version)
 	if err != nil {
 		log.Fatalf("error reading needle: %s", err)
 	}
@@ -61,7 +61,7 @@ func runFix(cmd *Command, args []string) bool {
 			debug("saved", count, "with error", pe)
 		}
 		offset += rest + 16
-		if n, rest, err = storage.ReadNeedle(dataFile); err != nil {
+		if n, rest, err = storage.ReadNeedle(dataFile, storage.Version); err != nil {
 			log.Fatalf("error reading needle: %s", err)
 		}
 		dataFile.Seek(int64(rest), 1)

@@ -2,6 +2,8 @@ package storage
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"path"
@@ -10,6 +12,7 @@ import (
 
 const (
 	SuperBlockSize = 8
+	Version        = 1
 )
 
 type Volume struct {
@@ -19,21 +22,25 @@ type Volume struct {
 	nm       *NeedleMap
 
 	replicaType ReplicationType
+	version     uint8
 
 	accessLock sync.Mutex
 }
 
 func NewVolume(dirname string, id VolumeId, replicationType ReplicationType) (v *Volume) {
-	v = &Volume{dir: dirname, Id: id, replicaType: replicationType}
-	v.load()
+	v = &Volume{dir: dirname, Id: id, replicaType: replicationType, version: Version}
+	if e := v.load(); e != nil {
+		log.Fatalf("cannot create volume: %s", e)
+	}
 	return
 }
-func (v *Volume) load() {
+func (v *Volume) load() error {
 	var e error
 	fileName := path.Join(v.dir, v.Id.String())
 	v.dataFile, e = os.OpenFile(fileName+".dat", os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
-		log.Fatalf("New Volume [ERROR] %s\n", e)
+		return fmt.Errorf("cannot create Volume Data %s.dat: %s", fileName, e)
+		// log.Fatalf("New Volume [ERROR] %s\n", e)
 	}
 	if v.replicaType == CopyNil {
 		v.readSuperBlock()
@@ -42,10 +49,13 @@ func (v *Volume) load() {
 	}
 	indexFile, ie := os.OpenFile(fileName+".idx", os.O_RDWR|os.O_CREATE, 0644)
 	if ie != nil {
-		log.Fatalf("Write Volume Index [ERROR] %s\n", ie)
+		// log.Fatalf("Write Volume Index [ERROR] %s\n", ie)
+		return fmt.Errorf("cannot create Volume Index %s.idx: %s", fileName, ie)
 	}
 	v.nm = LoadNeedleMap(indexFile)
+	return nil
 }
+
 func (v *Volume) Size() int64 {
 	stat, e := v.dataFile.Stat()
 	if e == nil {
@@ -57,21 +67,33 @@ func (v *Volume) Close() {
 	v.nm.Close()
 	v.dataFile.Close()
 }
-func (v *Volume) maybeWriteSuperBlock() {
-	stat, _ := v.dataFile.Stat()
+func (v *Volume) maybeWriteSuperBlock() error {
+	stat, err := v.dataFile.Stat()
+	if err != nil {
+		return err
+	}
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
 		header[0] = 1
 		header[1] = v.replicaType.Byte()
-		v.dataFile.Write(header)
+		header[2] = v.version
+		_, err = v.dataFile.Write(header)
 	}
+	return err
 }
-func (v *Volume) readSuperBlock() {
+func (v *Volume) readSuperBlock() error {
 	v.dataFile.Seek(0, 0)
 	header := make([]byte, SuperBlockSize)
-	if _, error := v.dataFile.Read(header); error == nil {
-		v.replicaType, _ = NewReplicationTypeFromByte(header[1])
+	_, err := io.ReadFull(v.dataFile, header)
+	if err != nil {
+		return fmt.Errorf("cannot read superblock: %s", err)
 	}
+	if v.replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
+		return fmt.Errorf("cannot read replica type: %s", err)
+	}
+	v.version = header[2]
+	// fmt.Printf("read superblock of %+v: version=%d\n", v, v.version)
+	return nil
 }
 func (v *Volume) NeedToReplicate() bool {
 	return v.replicaType.GetCopyCount() > 1
@@ -111,6 +133,7 @@ func (v *Volume) read(n *Needle) (int, error) {
 	nv, ok := v.nm.Get(n.Id)
 	if ok && nv.Offset > 0 {
 		v.dataFile.Seek(int64(nv.Offset)*PadLen, 0)
+		n.version = v.version
 		return n.Read(v.dataFile, nv.Size)
 	}
 	return -1, errors.New("Not Found")
@@ -127,9 +150,16 @@ func (v *Volume) commitCompact() (int, error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	v.dataFile.Close()
-	os.Rename(path.Join(v.dir, v.Id.String()+".cpd"), path.Join(v.dir, v.Id.String()+".dat"))
-	os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx"))
-	v.load()
+	var e error
+	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpd"), path.Join(v.dir, v.Id.String()+".dat")); e != nil {
+		return 0, e
+	}
+	if e = os.Rename(path.Join(v.dir, v.Id.String()+".cpx"), path.Join(v.dir, v.Id.String()+".idx")); e != nil {
+		return 0, e
+	}
+	if e = v.load(); e != nil {
+		return 0, e
+	}
 	return 0, nil
 }
 
@@ -158,7 +188,8 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 		dst.Write(header)
 	}
 
-	n, rest, err := ReadNeedle(src)
+	// fmt.Printf("volume %+v version=%d\n", v, v.version)
+	n, rest, err := ReadNeedle(src, v.version)
 	if err != nil {
 		return err
 	}
@@ -185,7 +216,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 			src.Seek(int64(rest-n.Size-4), 1)
 		}
 		old_offset += rest + 16
-		if n, rest, err = ReadNeedle(src); err != nil {
+		if n, rest, err = ReadNeedle(src, v.version); err != nil {
 			return err
 		}
 	}

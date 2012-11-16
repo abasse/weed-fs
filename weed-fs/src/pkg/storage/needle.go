@@ -38,6 +38,7 @@ type Needle struct {
 	reserved [5]byte              "reserved for future"
 	Info     textproto.MIMEHeader "headers (HTTP, like Content-Type, X-Filename, Content-Disposition)"
 	Padding  []byte               "Aligned to 8 bytes"
+	version  uint8                "version info"
 }
 
 // returns a new needle read from the HTTP request
@@ -58,7 +59,8 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 	if p := strings.LastIndexAny(fname, `/\`); p > -1 {
 		fname = fname[p+1:]
 	}
-	part.Header.Add("X-Filename", fname)
+	n.Info = part.Header
+	n.Info.Add("X-Filename", fname)
 	ext := ""
 	ctype := part.Header.Get("Content-Type")
 	if ctype == "" {
@@ -83,7 +85,7 @@ func NewNeedle(r *http.Request) (n *Needle, fname string, e error) {
 	}
 	n.Data = data
 	n.Checksum = NewCRC(data)
-	n.Info = part.Header
+	n.version = Version
 
 	commaSep := strings.LastIndex(r.URL.Path, ",")
 	dotSep := strings.LastIndex(r.URL.Path, ".")
@@ -169,6 +171,7 @@ func (n *Needle) Append(w io.Writer) (uint32, error) {
 
 // reads needle with data, returns read data length and error
 func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
+	// fmt.Printf("%+v.Read(%s, %d)\n", n, r, size)
 	header := make([]byte, HeaderSize+size+CksumLen)
 	ret, e := io.ReadFull(r, header)
 	if e != nil {
@@ -177,11 +180,19 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Cookie = util.BytesToUint32(header[0:4])
 	n.Id = util.BytesToUint64(header[4:12])
 	n.Size = util.BytesToUint32(header[12:16])
-	n.Flags = header[16]
-	n.infosize = util.BytesToUint16(header[17:19])
-	n.Data = header[HeaderSize : HeaderSize+size]
-	checksum := util.BytesToUint32(header[HeaderSize+size : HeaderSize+size+CksumLen])
+	hsize := uint32(HeaderSize)
+	if n.version > 0 {
+		n.Flags = header[16]
+		n.infosize = util.BytesToUint16(header[17:19])
+	} else {
+		hsize = 16
+		n.infosize = 0
+		n.Flags = 0
+	}
+	n.Data = header[hsize : hsize+size]
+	checksum := util.BytesToUint32(header[hsize+size : hsize+size+CksumLen])
 	if checksum != NewCRC(n.Data).Value() {
+		// fmt.Printf("version=%d\n", n.version)
 		return 0, errors.New("CRC error! Data On Disk Corrupted!")
 	}
 	if n.infosize > 0 {
@@ -197,12 +208,17 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 		if e != nil {
 			return ret, fmt.Errorf("cannot read info (%s): %s", info, e)
 		}
+		if filename := n.Info.Get("X-Filename"); filename != "" {
+			n.Info.Set("Content-Disposition", "inline; filename=\""+filename+"\"")
+		}
 	}
 	return ret, e
 }
 
 // returns filled Needle, rest (jump) size and error
-func ReadNeedle(r *os.File) (*Needle, uint32, error) {
+// version is needed to be able to distinguish between needle versions
+func ReadNeedle(r *os.File, version uint8) (*Needle, uint32, error) {
+	// fmt.Printf("ReadNeedle(%s, %d)\n", r, version)
 	n := new(Needle)
 	bytes := make([]byte, HeaderSize)
 	count, e := r.Read(bytes)
@@ -212,9 +228,16 @@ func ReadNeedle(r *os.File) (*Needle, uint32, error) {
 	n.Cookie = util.BytesToUint32(bytes[0:4])
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
-	n.Flags = bytes[16]
-	n.infosize = util.BytesToUint16(bytes[17:19])
-	rest := PadLen - ((n.Size + HeaderSize + uint32(n.infosize) + CksumLen) % PadLen)
+	hsize := uint32(HeaderSize)
+	if version > 0 {
+		n.Flags = bytes[16]
+		n.infosize = util.BytesToUint16(bytes[17:19])
+	} else {
+		hsize = 16
+		n.infosize = 0
+		n.Flags = 0
+	}
+	rest := PadLen - ((n.Size + hsize + uint32(n.infosize) + CksumLen) % PadLen)
 	return n, n.Size + CksumLen + uint32(n.infosize) + rest, nil
 }
 
@@ -247,7 +270,6 @@ func HeaderToBytes(header textproto.MIMEHeader) ([]byte, error) {
 			hdrs[k] = v
 		}
 	}
-	// FIXME: Content-Disposition
 	hbuf := bytes.NewBuffer(nil)
 	if err := hdrs.Write(hbuf); err != nil {
 		return nil, err
