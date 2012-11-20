@@ -181,7 +181,7 @@ func (n *Needle) Read(r io.Reader, size uint32) (int, error) {
 	n.Id = util.BytesToUint64(header[4:12])
 	n.Size = util.BytesToUint32(header[12:16])
 	hsize := uint32(HeaderSize)
-	if n.version > 0 {
+	if n.version > 1 {
 		n.Flags = header[16]
 		n.infosize = util.BytesToUint16(header[17:19])
 	} else {
@@ -229,7 +229,7 @@ func ReadNeedle(r *os.File, version uint8) (*Needle, uint32, error) {
 	n.Id = util.BytesToUint64(bytes[4:12])
 	n.Size = util.BytesToUint32(bytes[12:16])
 	hsize := uint32(HeaderSize)
-	if version > 0 {
+	if version > 1 {
 		n.Flags = bytes[16]
 		n.infosize = util.BytesToUint16(bytes[17:19])
 	} else {

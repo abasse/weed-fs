@@ -12,7 +12,7 @@ import (
 
 const (
 	SuperBlockSize = 8
-	Version        = 1
+	Version        = 2
 )
 
 type Volume struct {
@@ -74,9 +74,8 @@ func (v *Volume) maybeWriteSuperBlock() error {
 	}
 	if stat.Size() == 0 {
 		header := make([]byte, SuperBlockSize)
-		header[0] = 1
+		header[0] = v.version
 		header[1] = v.replicaType.Byte()
-		header[2] = v.version
 		_, err = v.dataFile.Write(header)
 	}
 	return err
@@ -88,10 +87,10 @@ func (v *Volume) readSuperBlock() error {
 	if err != nil {
 		return fmt.Errorf("cannot read superblock: %s", err)
 	}
+	v.version = header[0]
 	if v.replicaType, err = NewReplicationTypeFromByte(header[1]); err != nil {
 		return fmt.Errorf("cannot read replica type: %s", err)
 	}
-	v.version = header[2]
 	// fmt.Printf("read superblock of %+v: version=%d\n", v, v.version)
 	return nil
 }
