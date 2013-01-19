@@ -115,7 +115,7 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 	}
 	return
 }
-func (v *Volume) delete(n *Needle) uint32 {
+func (v *Volume) delete(n *Needle) (uint32, error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
 	nv, ok := v.nm.Get(n.Id)
@@ -123,10 +123,10 @@ func (v *Volume) delete(n *Needle) uint32 {
 	if ok {
 		v.nm.Delete(n.Id)
 		v.dataFile.Seek(int64(nv.Offset*NeedlePaddingSize), 0)
-		n.Append(v.dataFile, v.version)
-		return nv.Size
+		_, err := n.Append(v.dataFile, v.version)
+		return nv.Size, err
 	}
-	return 0
+	return 0, nil
 }
 
 func (v *Volume) read(n *Needle) (int, error) {
@@ -193,9 +193,15 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 		dst.Write(header)
 	}
 
-	version, _, _ := ParseSuperBlock(header)
+	version, _, err := ParseSuperBlock(header)
+	if err != nil {
+		return fmt.Errorf("cannot parse superblock: %s", err)
+	}
 
-	n, rest := ReadNeedleHeader(src, version)
+	n, rest, err := ReadNeedleHeader(src, version)
+	if err != nil {
+		return fmt.Errorf("cannot read needle header: %s", err)
+	}
 	nm := NewNeedleMap(idx)
 	old_offset := uint32(SuperBlockSize)
 	new_offset := uint32(SuperBlockSize)
@@ -207,7 +213,9 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 		} else {
 			if nv.Size > 0 {
 				nm.Put(n.Id, new_offset/NeedlePaddingSize, n.Size)
-				n.ReadNeedleBody(src, version, rest)
+				if err = n.ReadNeedleBody(src, version, rest); err != nil {
+					return fmt.Errorf("cannot read needle body: %s", err)
+				}
 				n.Append(dst, v.version)
 				new_offset += rest + NeedleHeaderSize
 				//log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
@@ -216,7 +224,9 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 			}
 		}
 		old_offset += rest + NeedleHeaderSize
-		n, rest = ReadNeedleHeader(src, version)
+		if n, rest, err = ReadNeedleHeader(src, version); err != nil {
+			return fmt.Errorf("cannot read needle header: %s", err)
+		}
 	}
 
 	return nil

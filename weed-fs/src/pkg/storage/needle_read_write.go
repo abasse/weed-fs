@@ -8,6 +8,12 @@ import (
 	"pkg/util"
 )
 
+const (
+	FlagGzip    = 0x01
+	FlagHasName = 0x02
+	FlagHasMime = 0x04
+)
+
 func (n *Needle) Append(w io.Writer, version Version) (size uint32, err error) {
 	switch version {
 	case Version1:
@@ -150,13 +156,14 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) {
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 	}
 }
-func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32) {
+func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32, err error) {
 	n = new(Needle)
 	if version == Version1 || version == Version2 {
 		bytes := make([]byte, NeedleHeaderSize)
-		count, e := r.Read(bytes)
-		if count <= 0 || e != nil {
-			return nil, 0
+		var count int
+		count, err = r.Read(bytes)
+		if count <= 0 || err != nil {
+			return nil, 0, err
 		}
 		n.readNeedleHeader(bytes)
 		padding := NeedlePaddingSize - ((n.Size + NeedleHeaderSize + NeedleChecksumSize) % NeedlePaddingSize)
@@ -167,37 +174,43 @@ func ReadNeedleHeader(r *os.File, version Version) (n *Needle, bodyLength uint32
 
 //n should be a needle already read the header
 //the input stream will read until next file entry
-func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) {
+func (n *Needle) ReadNeedleBody(r *os.File, version Version, bodyLength uint32) (err error) {
 	switch version {
 	case Version1:
 		bytes := make([]byte, bodyLength)
-		r.Read(bytes)
+		if _, err = r.Read(bytes); err != nil {
+			return
+		}
 		n.Data = bytes[:n.Size]
 		n.Checksum = NewCRC(n.Data)
 	case Version2:
 		bytes := make([]byte, bodyLength)
-		r.Read(bytes)
+		if _, err = r.Read(bytes); err != nil {
+			return
+		}
 		n.readNeedleDataVersion2(bytes[0:n.Size])
 		n.Checksum = NewCRC(n.Data)
+	default:
+		err = fmt.Errorf("Unsupported Version! (%d)", version)
 	}
 	return
 }
 
 func (n *Needle) IsGzipped() bool {
-	return n.Flags&0x01 == 0x01
+	return n.Flags&FlagGzip > 0
 }
 func (n *Needle) SetGzipped() {
-	n.Flags = n.Flags | 0x01
+	n.Flags = n.Flags | FlagGzip
 }
 func (n *Needle) HasName() bool {
-	return n.Flags&0x02 == 0x02
+	return n.Flags&FlagHasName > 0
 }
 func (n *Needle) SetHasName() {
-	n.Flags = n.Flags | 0x02
+	n.Flags = n.Flags | FlagHasName
 }
 func (n *Needle) HasMime() bool {
-	return n.Flags&0x04 == 0x04
+	return n.Flags&FlagHasMime > 0
 }
 func (n *Needle) SetHasMime() {
-	n.Flags = n.Flags | 0x04
+	n.Flags = n.Flags | FlagHasMime
 }

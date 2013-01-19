@@ -50,9 +50,15 @@ func runFix(cmd *Command, args []string) bool {
 		log.Fatalf("cannot read superblock: %s", e)
 	}
 
-	ver, _, _ := storage.ParseSuperBlock(header)
+	ver, _, e := storage.ParseSuperBlock(header)
+	if e != nil {
+		log.Fatalf("error parsing superblock: %s", e)
+	}
 
-	n, rest := storage.ReadNeedleHeader(dataFile, ver)
+	n, rest, e := storage.ReadNeedleHeader(dataFile, ver)
+	if e != nil {
+		log.Fatalf("error reading needle header: %s", e)
+	}
 	dataFile.Seek(int64(rest), 1)
 	nm := storage.NewNeedleMap(indexFile)
 	offset := uint32(storage.SuperBlockSize)
@@ -63,7 +69,9 @@ func runFix(cmd *Command, args []string) bool {
 			debug("saved", count, "with error", pe)
 		}
 		offset += rest + 16
-		n, rest = storage.ReadNeedleHeader(dataFile, ver)
+		if n, rest, e = storage.ReadNeedleHeader(dataFile, ver); e != nil {
+			log.Fatalf("error reading needle header: %s", e)
+		}
 		dataFile.Seek(int64(rest), 1)
 	}
 	return true

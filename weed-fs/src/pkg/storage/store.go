@@ -180,11 +180,11 @@ func (s *Store) Write(i VolumeId, n *Needle) (size uint32, err error) {
 	log.Println("volume", i, "not found!")
 	return
 }
-func (s *Store) Delete(i VolumeId, n *Needle) uint32 {
+func (s *Store) Delete(i VolumeId, n *Needle) (uint32, error) {
 	if v := s.volumes[i]; v != nil {
 		return v.delete(n)
 	}
-	return 0
+	return 0, nil
 }
 func (s *Store) Read(i VolumeId, n *Needle) (int, error) {
 	if v := s.volumes[i]; v != nil {

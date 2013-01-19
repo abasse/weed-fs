@@ -238,7 +238,11 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n.Size = 0
-	ret := store.Delete(volumeId, n)
+	ret, err := store.Delete(volumeId, n)
+	if err != nil {
+		log.Println("delete error: %s", err)
+		return
+	}
 
 	needToReplicate := !store.HasVolume(volumeId)
 	if !needToReplicate && ret > 0 {
