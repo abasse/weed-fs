@@ -99,16 +99,21 @@ func (v *Volume) NeedToReplicate() bool {
 	return v.replicaType.GetCopyCount() > 1
 }
 
-func (v *Volume) write(n *Needle) uint32 {
+func (v *Volume) write(n *Needle) (size uint32, err error) {
 	v.accessLock.Lock()
 	defer v.accessLock.Unlock()
-	offset, _ := v.dataFile.Seek(0, 2)
-	ret := n.Append(v.dataFile, v.version)
+	var offset int64
+	if offset, err = v.dataFile.Seek(0, 2); err != nil {
+		return
+	}
+	if size, err = n.Append(v.dataFile, v.version); err != nil {
+		return
+	}
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || int64(nv.Offset)*8 < offset {
 		v.nm.Put(n.Id, uint32(offset/8), n.Size)
 	}
-	return ret
+	return
 }
 func (v *Volume) delete(n *Needle) uint32 {
 	v.accessLock.Lock()

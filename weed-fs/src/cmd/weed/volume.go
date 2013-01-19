@@ -176,13 +176,13 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 		if ne != nil {
 			writeJson(w, r, ne)
 		} else {
-			ret := store.Write(volumeId, needle)
+			ret, err := store.Write(volumeId, needle)
 			errorStatus := ""
 			needToReplicate := !store.HasVolume(volumeId)
-			if ret > 0 {
+			if ret > 0 && err == nil {
 				needToReplicate = needToReplicate || store.GetVolume(volumeId).NeedToReplicate()
 			} else {
-				errorStatus = "Failed to write to local disk"
+				errorStatus = "Failed to write to local disk (" + err.Error() + ")"
 			}
 			if !needToReplicate && ret > 0 {
 				needToReplicate = store.GetVolume(volumeId).NeedToReplicate()
