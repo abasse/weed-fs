@@ -65,7 +65,7 @@ func runFix(cmd *Command, args []string) bool {
 	for n != nil {
 		debug("key", n.Id, "volume offset", offset, "data_size", n.Size, "rest", rest)
 		if n.Size > 0 {
-			count, pe := nm.Put(n.Id, offset/8, n.Size)
+			count, pe := nm.Put(n.Id, offset/storage.NeedlePaddingSize, n.Size)
 			debug("saved", count, "with error", pe)
 		}
 		offset += rest + 16

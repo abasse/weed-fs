@@ -70,7 +70,11 @@ func (v *Volume) Close() {
 	v.dataFile.Close()
 }
 func (v *Volume) maybeWriteSuperBlock() {
-	stat, _ := v.dataFile.Stat()
+	stat, e := v.dataFile.Stat()
+	if e != nil {
+		fmt.Printf("failed to stat datafile %s: %s", v.dataFile, e)
+		return
+	}
 	if stat.Size() == 0 {
 		v.version = CurrentVersion
 		header := make([]byte, SuperBlockSize)
@@ -110,8 +114,8 @@ func (v *Volume) write(n *Needle) (size uint32, err error) {
 		return
 	}
 	nv, ok := v.nm.Get(n.Id)
-	if !ok || int64(nv.Offset)*8 < offset {
-		v.nm.Put(n.Id, uint32(offset/8), n.Size)
+	if !ok || int64(nv.Offset)*NeedlePaddingSize < offset {
+		_, err = v.nm.Put(n.Id, uint32(offset/NeedlePaddingSize), n.Size)
 	}
 	return
 }
@@ -169,38 +173,43 @@ func (v *Volume) commitCompact() error {
 }
 
 func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) (err error) {
-	src, err := os.OpenFile(srcName, os.O_RDONLY, 0644)
-	if err != nil {
-		return err
+	var (
+		src, dst, idx *os.File
+	)
+	if src, err = os.OpenFile(srcName, os.O_RDONLY, 0644); err != nil {
+		return
 	}
 	defer src.Close()
 
-	dst, err := os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return err
+	if dst, err = os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, 0644); err != nil {
+		return
 	}
 	defer dst.Close()
 
-	idx, err := os.OpenFile(idxName, os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return err
+	if idx, err = os.OpenFile(idxName, os.O_WRONLY|os.O_CREATE, 0644); err != nil {
+		return
 	}
 	defer idx.Close()
 
 	src.Seek(0, 0)
 	header := make([]byte, SuperBlockSize)
-	if _, error := src.Read(header); error == nil {
-		dst.Write(header)
+	if _, err = src.Read(header); err == nil {
+		_, err = dst.Write(header)
+	}
+	if err != nil {
+		return err
 	}
 
-	version, _, err := ParseSuperBlock(header)
-	if err != nil {
-		return fmt.Errorf("cannot parse superblock: %s", err)
+	version, _, e := ParseSuperBlock(header)
+	if e != nil {
+		err = fmt.Errorf("cannot parse superblock: %s", e)
+		return
 	}
 
-	n, rest, err := ReadNeedleHeader(src, version)
-	if err != nil {
-		return fmt.Errorf("cannot read needle header: %s", err)
+	n, rest, e := ReadNeedleHeader(src, version)
+	if e != nil {
+		err = fmt.Errorf("cannot read needle header: %s", e)
+		return
 	}
 	nm := NewNeedleMap(idx)
 	old_offset := uint32(SuperBlockSize)
@@ -212,11 +221,15 @@ func (v *Volume) copyDataAndGenerateIndexFile(srcName, dstName, idxName string) 
 			src.Seek(int64(rest), 1)
 		} else {
 			if nv.Size > 0 {
-				nm.Put(n.Id, new_offset/NeedlePaddingSize, n.Size)
+				if _, err = nm.Put(n.Id, new_offset/NeedlePaddingSize, n.Size); err != nil {
+					return fmt.Errorf("cannot put needle: %s", err)
+				}
 				if err = n.ReadNeedleBody(src, version, rest); err != nil {
 					return fmt.Errorf("cannot read needle body: %s", err)
 				}
-				n.Append(dst, v.version)
+				if _, err = n.Append(dst, v.version); err != nil {
+					return fmt.Errorf("cannot append needle: %s", err)
+				}
 				new_offset += rest + NeedleHeaderSize
 				//log.Println("saving key", n.Id, "volume offset", old_offset, "=>", new_offset, "data_size", n.Size, "rest", rest)
 			} else {
